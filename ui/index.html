@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bancada</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">Bancada</div>
+      <nav id="abas">
+        <button data-aba="biblioteca">Biblioteca</button>
+        <button data-aba="tratar">Tratar Imagem</button>
+        <button data-aba="dtf" class="ativa">Montar DTF</button>
+        <button data-aba="moldes">Encaixar Moldes</button>
+        <button data-aba="mockups">Mockups</button>
+      </nav>
+    </header>
+
+    <div id="aviso-navegador" hidden>
+      Você está no navegador — a prévia do layout funciona, mas o encaixe e a
+      biblioteca rodam dentro do app de desktop (Rust). Abra pela Bancada.
+    </div>
+
+    <!-- ======================= Biblioteca ======================= -->
+    <section id="aba-biblioteca" class="aba">
+      <aside>
+        <h2>Clientes</h2>
+        <div class="linha">
+          <input id="cliente-nome" type="text" placeholder="Nome do cliente" />
+          <button id="cliente-add">Adicionar</button>
+        </div>
+        <ul id="clientes-lista" class="lista"></ul>
+
+        <h2 style="margin-top:28px">Dados e backup</h2>
+        <div id="cfg-pasta" class="info fraco"></div>
+        <div class="grade-botoes">
+          <button id="cfg-mudar-pasta" title="Escolher onde ficam o banco de dados e os arquivos da Central">Alterar pasta de dados…</button>
+          <button id="backup-exportar" title="Copia o banco e todos os arquivos para uma pasta datada">Exportar backup completo</button>
+          <button id="backup-importar" title="Restaura um backup exportado anteriormente">Importar backup…</button>
+        </div>
+        <div id="cfg-aviso" class="info"></div>
+      </aside>
+      <main>
+        <h2>Logos</h2>
+        <div class="linha">
+          <input id="logo-nome" type="text" placeholder="Nome da logo" />
+          <input id="logo-arquivo" type="file" accept="image/*" />
+          <button id="logo-add">Guardar na biblioteca</button>
+        </div>
+        <ul id="logos-lista" class="lista"></ul>
+
+        <h2 style="margin-top:28px">Folhas salvas</h2>
+        <div class="linha">
+          <input id="folhas-busca" type="text" placeholder="Buscar por nome, cliente ou texto das logos…" />
+          <label class="btn-arquivo">Por imagem<input id="folhas-busca-img" type="file" accept="image/*" hidden /></label>
+        </div>
+        <div id="folhas-grade" class="grade-folhas"></div>
+      </main>
+    </section>
+
+    <!-- ======================= Tratar Imagem ======================= -->
+    <section id="aba-tratar" class="aba">
+      <aside id="editor-painel">
+        <details open>
+          <summary>Abrir</summary>
+          <input id="ed-arquivo" type="file" accept="image/png,image/jpeg" />
+          <div id="ed-info" class="info"></div>
+        </details>
+        <details open>
+          <summary>Ferramentas</summary>
+          <label>Tolerância <input id="ed-tol" type="range" min="0" max="100" value="15" /></label>
+          <div class="linha">
+            <button id="ed-pick">Conta-gotas</button>
+            <span id="ed-swatch" title="Cor escolhida"></span>
+            <input id="ed-cor-nova" type="color" value="#00789e" title="Nova cor" />
+          </div>
+          <div class="grade-botoes">
+            <button data-op="fundo">Remover fundo</button>
+            <button data-op="removerCor">Remover cor</button>
+            <button data-op="trocarCor">Trocar cor</button>
+            <button data-op="mono">Monocromia</button>
+            <button data-op="recorte">Recortar conteúdo</button>
+          </div>
+          <label>Detalhe das cores <input id="ed-precisao" type="range" min="1" max="8" value="6" title="Mais detalhe = mais tons separados na vetorização" /></label>
+          <div class="grade-botoes">
+            <button id="ed-vetorizar">Vetorizar</button>
+            <button id="ed-upscale-ia">Upscale IA 4×</button>
+          </div>
+          <a id="ed-svg" class="botao-link" hidden>Baixar SVG</a>
+          <label>Limiar de alpha
+            <span class="linha"><input id="ed-alpha" type="number" min="0" max="255" value="128" />
+            <button data-op="alpha">Aplicar</button></span>
+          </label>
+          <button id="ed-desfazer" disabled>Desfazer</button>
+        </details>
+        <div class="acoes">
+          <button id="ed-salvar" class="primario" disabled>Usar no Montar DTF</button>
+        </div>
+        <div class="acoes">
+          <button id="ed-descartar" disabled>Descartar</button>
+        </div>
+        <div id="ed-progresso"></div>
+        <div id="ed-aviso"></div>
+      </aside>
+      <main id="editor-main">
+        <div id="ed-vazio">Abra uma imagem para tratar.</div>
+        <canvas id="ed-canvas" hidden></canvas>
+      </main>
+    </section>
+
+    <!-- ======================= Montar DTF ======================= -->
+    <section id="aba-dtf" class="aba ativa">
+      <aside id="dtf-painel">
+        <details open>
+          <summary>Filme</summary>
+          <label>Nome da folha <input id="s-sheetname" type="text" placeholder="ex.: uniformes João" /></label>
+          <label>Cliente <input id="s-cliente" type="text" placeholder="opcional" /></label>
+          <label>Largura (cm) <input id="s-width" type="number" value="58" step="0.5" min="1" max="200" /></label>
+          <label>Margem (cm) <input id="s-margin" type="number" value="0.5" step="0.1" min="0" /></label>
+          <label>Espaçamento (cm) <input id="s-gap" type="number" value="0.3" step="0.1" min="0" /></label>
+          <label>Compr. máx. (cm) <input id="s-maxlen" type="number" value="3000" step="10" min="10" /></label>
+          <label>DPI <input id="s-dpi" type="number" value="300" step="1" min="72" max="1200" /></label>
+        </details>
+        <details open>
+          <summary>Encaixe</summary>
+          <label class="check"><input id="s-contour" type="checkbox" /> Pelo contorno das artes</label>
+          <label class="check"><input id="s-grouped" type="checkbox" /> Manter cópias juntas</label>
+          <label class="check"><input id="s-mirror" type="checkbox" /> Espelhar (para prensa)</label>
+          <label>Ângulos
+            <select id="s-angle">
+              <option value="90">90°</option>
+              <option value="45">45°</option>
+              <option value="15">15°</option>
+            </select>
+          </label>
+        </details>
+        <details open>
+          <summary>Artes</summary>
+          <input id="add-artes" type="file" accept="image/png,image/jpeg" multiple />
+          <ul id="artes-lista" class="lista"></ul>
+        </details>
+        <div class="acoes">
+          <button id="btn-encaixar" class="primario">Encaixar</button>
+          <button id="btn-exportar" disabled>PNG</button>
+          <button id="btn-exportar-pdf" disabled>PDF</button>
+        </div>
+        <div class="acoes">
+          <button id="btn-salvar-folha">Salvar folha na biblioteca</button>
+          <button id="btn-nova-folha" title="Desvincula a montagem atual da folha salva — o próximo salvamento cria um registro novo">Nova folha</button>
+        </div>
+        <div id="folha-atual"></div>
+        <div id="progresso"></div>
+        <div id="aviso"></div>
+      </aside>
+      <main id="dtf-main">
+        <div id="stats"></div>
+        <div id="folhas"></div>
+      </main>
+    </section>
+
+    <!-- ======================= Encaixar Moldes ======================= -->
+    <section id="aba-moldes" class="aba">
+      <aside id="moldes-painel">
+        <details open>
+          <summary>Rolo</summary>
+          <label>Largura
+            <select id="m-larg">
+              <option value="1550">155 cm</option>
+              <option value="1750" selected>175 cm</option>
+              <option value="custom">Outra…</option>
+            </select>
+          </label>
+          <label id="m-larg-custom-wrap" hidden>Largura (cm)
+            <input id="m-larg-custom" type="number" value="160" min="10" step="1" />
+          </label>
+          <label>Espaço entre peças (mm) <input id="m-gap" type="number" value="5" min="0" step="0.5" /></label>
+          <label>Compr. máx. por arquivo (cm) <input id="m-maxlen" type="number" value="200" min="20" step="10" /></label>
+          <label>Precisão do encaixe
+            <select id="m-grid">
+              <option value="1.5">Fina (1,5 mm) — mais lenta</option>
+              <option value="2" selected>Normal (2 mm)</option>
+              <option value="3">Rápida (3 mm)</option>
+            </select>
+          </label>
+        </details>
+        <details open>
+          <summary>Moldes</summary>
+          <label class="check"><input id="m-split" type="checkbox" checked /> Separar as partes (frente, costas, mangas…)</label>
+          <label class="check"><input id="m-white" type="checkbox" /> Tratar fundo branco como vazio</label>
+          <label class="check"><input id="m-together" type="checkbox" checked /> Manter peças do mesmo pedido próximas</label>
+        </details>
+        <div class="acoes">
+          <button id="m-encaixar" class="primario">Encaixar</button>
+          <button id="m-exportar" disabled>Salvar PDFs</button>
+        </div>
+        <div id="m-progresso"></div>
+        <div id="m-aviso"></div>
+      </aside>
+      <main id="moldes-main">
+        <div class="bloco">
+          <div class="bloco-topo">
+            <h3>Pedidos</h3>
+            <span id="m-soma" class="fraco"></span>
+          </div>
+          <div id="m-pedidos"></div>
+          <button id="m-add-pedido">+ Novo pedido</button>
+        </div>
+        <div class="bloco" id="m-resultado" hidden>
+          <h3>Resultado</h3>
+          <div id="m-stats" class="stats-linha"></div>
+          <div id="m-legenda" class="legenda"></div>
+          <div id="m-erros" class="erros"></div>
+          <div id="m-partes" class="partes"></div>
+        </div>
+      </main>
+    </section>
+
+    <!-- ======================= Mockups ======================= -->
+    <section id="aba-mockups" class="aba">
+      <aside id="mk-painel">
+        <details open>
+          <summary>Catálogo</summary>
+          <label>Pasta de fotos <input id="mk-pasta" type="text" placeholder="C:\...\fotos dos produtos" /></label>
+          <div class="acoes">
+            <button id="mk-procurar-pasta" title="Escolher a pasta pela janela do Windows">Procurar…</button>
+            <button id="mk-abrir-pasta">Abrir pasta</button>
+            <button id="mk-salvar-cfg" title="Grava as posições e medidas na pasta do catálogo" disabled>Salvar configurações</button>
+          </div>
+          <div id="mk-cat-info" class="fraco"></div>
+        </details>
+        <details open>
+          <summary>Logo</summary>
+          <input id="mk-logo" type="file" accept="image/png,image/jpeg" />
+          <div id="mk-logo-prev" class="logoprev-mk" hidden><canvas id="mk-logo-canvas"></canvas></div>
+          <div id="mk-logo-meta" class="fraco"></div>
+          <label class="check"><input id="mk-rmbg" type="checkbox" checked /> Remover fundo</label>
+          <div id="mk-rmbg-ops" hidden>
+            <label>Tolerância <input id="mk-tol" type="number" value="30" min="0" max="120" /></label>
+            <label>Suavização <input id="mk-soft" type="number" value="14" min="0" max="60" /></label>
+            <label>Modo
+              <select id="mk-bgmode">
+                <option value="all">Toda a imagem</option>
+                <option value="outer">Só o fundo de fora</option>
+              </select>
+            </label>
+          </div>
+          <div class="fraco" style="margin-top:6px">Variantes</div>
+          <div id="mk-variantes" class="chips-mk"></div>
+          <div class="linha-mk">
+            <input id="mk-cor-nova" type="color" value="#1e88e5" title="Nova cor sólida" />
+            <button id="mk-add-cor">+ Cor</button>
+          </div>
+          <label class="check"><input id="mk-darkalt" type="checkbox" checked /> Versão clara em produto escuro</label>
+        </details>
+        <details open>
+          <summary>Acabamento</summary>
+          <label>Técnica
+            <select id="mk-finish">
+              <option value="silk" selected>Silk / DTF (sombra do tecido)</option>
+              <option value="bordado">Bordado</option>
+              <option value="laser">Gravação a laser</option>
+              <option value="relevo">Relevo</option>
+              <option value="dourado">Dourado metálico</option>
+              <option value="prateado">Prateado metálico</option>
+              <option value="nenhum">Nenhum (logo pura)</option>
+            </select>
+          </label>
+          <label>Sombra do tecido <input id="mk-shade" type="range" min="0" max="100" value="60" /></label>
+          <label class="check"><input id="mk-sizetext" type="checkbox" checked /> Anotar tamanho da aplicação (cm)</label>
+        </details>
+        <div class="acoes">
+          <button id="mk-salvar" class="primario" disabled>Salvar mockups</button>
+        </div>
+        <div id="mk-progresso"></div>
+        <div id="mk-aviso"></div>
+      </aside>
+      <main id="mockups-main">
+        <div id="mk-vazio" class="fraco">Abra a pasta com as fotos dos produtos e escolha uma logo.</div>
+        <div id="mk-grade"></div>
+      </main>
+      <div id="mk-editor" hidden>
+        <div id="mk-ed-stage-wrap">
+          <div id="mk-ed-stage">
+            <img id="mk-ed-img" alt="" />
+            <div id="mk-ed-boxes"></div>
+            <div id="mk-ed-ruler" hidden>
+              <div class="rl-label" id="mk-ed-ruler-label"></div>
+              <div class="rh" id="mk-ed-rh1"></div>
+              <div class="rh" id="mk-ed-rh2"></div>
+            </div>
+          </div>
+        </div>
+        <div id="mk-ed-side">
+          <h3 id="mk-ed-titulo">Posições</h3>
+          <div id="mk-ed-poslist"></div>
+          <button id="mk-ed-add">+ Posição</button>
+          <div id="mk-ed-pos-ops" hidden>
+            <label>Nome <input id="mk-ed-nome" type="text" /></label>
+            <label>Tamanho <input id="mk-ed-s" type="range" min="10" max="150" step="1" /></label>
+            <label>Tamanho (cm) <input id="mk-ed-cm" type="number" min="0" step="0.5" placeholder="usa a régua" /></label>
+            <label>Rotação (°) <input id="mk-ed-rot" type="number" step="1" /></label>
+          </div>
+          <h4>Régua (escala real)</h4>
+          <label class="check"><input id="mk-ed-ruler-on" type="checkbox" /> Mostrar régua</label>
+          <div class="linha-mk">
+            <label>Distância entre os pontos (cm) <input id="mk-ed-ruler-cm" type="number" min="0" step="0.5" /></label>
+          </div>
+          <div class="acoes">
+            <button id="mk-ed-fechar" class="primario">Concluir</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,8 @@
+target/
+node_modules/
+dist/
+# Motor de upscale IA (sidecar, ~45 MB): instalar com scripts/instalar-motores.ps1
+bin/realesrgan/
+# Dados locais
+*.sqlite
+*.sqlite-journal
