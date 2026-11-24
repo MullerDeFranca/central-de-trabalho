@@ -6,3 +6,6 @@ bin/realesrgan/
 # Dados locais
 *.sqlite
 *.sqlite-journal
+
+# Workflow de CI aguarda token com escopo "workflow" (ver MANUTENCAO.md)
+.github/
