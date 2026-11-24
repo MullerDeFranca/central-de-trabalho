@@ -16,6 +16,9 @@ png = "0.18"
 miniz_oxide = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+ureq = { version = "2", default-features = false, features = ["tls"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 base64 = "0.22"
 nucleo = { path = "../nucleo" }
 

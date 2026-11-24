@@ -12,6 +12,7 @@ use nucleo::retangular::{item_variants, pack_rect, PackItem};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Read as _;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -1222,9 +1223,9 @@ fn editor_op(
     editor_view(sess)
 }
 
-/// Localiza o motor Real-ESRGAN embutido: ao lado do exe (release) ou no
-/// repositório (dev), sempre na pasta `bin/realesrgan`.
-fn realesrgan_exe() -> Result<std::path::PathBuf, String> {
+/// Localiza a pasta do motor Real-ESRGAN embutido: ao lado do exe (release)
+/// ou no repositório (dev), sempre em `bin/realesrgan`.
+fn realesrgan_dir() -> Result<std::path::PathBuf, String> {
     let mut candidatos = vec![
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..\\bin\\realesrgan"),
     ];
@@ -1235,12 +1236,151 @@ fn realesrgan_exe() -> Result<std::path::PathBuf, String> {
         }
     }
     for pasta in candidatos {
-        let exe = pasta.join("realesrgan-ncnn-vulkan.exe");
-        if exe.exists() && pasta.join("models").exists() {
-            return Ok(exe);
+        if pasta.join("realesrgan-ncnn-vulkan.exe").exists() && pasta.join("models").exists() {
+            return Ok(pasta);
         }
     }
     Err("motor de upscale IA não encontrado (pasta bin/realesrgan)".into())
+}
+
+fn realesrgan_exe() -> Result<std::path::PathBuf, String> {
+    Ok(realesrgan_dir()?.join("realesrgan-ncnn-vulkan.exe"))
+}
+
+/* ---------------- Atualização dos motores (§9.5) ---------------- */
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SidecarStatus {
+    instalado: bool,
+    versao: Option<String>,
+    tem_anterior: bool,
+}
+
+#[tauri::command]
+fn motor_sidecar_status() -> SidecarStatus {
+    match realesrgan_dir() {
+        Ok(dir) => {
+            let versao = std::fs::read_to_string(dir.join("VERSAO.txt"))
+                .ok()
+                .map(|s| s.trim().to_string());
+            let tem_anterior = dir
+                .parent()
+                .map(|p| p.join("realesrgan-anterior\\realesrgan-ncnn-vulkan.exe").exists())
+                .unwrap_or(false);
+            SidecarStatus { instalado: true, versao, tem_anterior }
+        }
+        Err(_) => SidecarStatus { instalado: false, versao: None, tem_anterior: false },
+    }
+}
+
+/// Baixa o pacote oficial novo do motor e troca o sidecar, guardando a versão
+/// anterior para rollback (§9.5: nada é atualizado sem ação do usuário).
+#[tauri::command]
+fn motor_sidecar_atualizar(url: String, tag: String) -> Result<String, String> {
+    let dir = realesrgan_dir()?;
+    let bin_dir = dir.parent().unwrap().to_path_buf();
+    // Download do zip oficial.
+    let resp = ureq::get(&url)
+        .set("User-Agent", "central-de-trabalho")
+        .call()
+        .map_err(|e| format!("falha no download: {e}"))?;
+    let mut bytes = Vec::new();
+    resp.into_reader()
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("falha ao ler o download: {e}"))?;
+    // Extrai numa pasta temporária.
+    let tmp = std::env::temp_dir().join(format!("central-motor-{tag}"));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e| format!("zip inválido: {e}"))?
+        .extract(&tmp)
+        .map_err(|e| format!("falha ao extrair: {e}"))?;
+    // Acha a pasta que contém o executável do motor.
+    fn achar_motor(p: &std::path::Path) -> Option<std::path::PathBuf> {
+        if p.join("realesrgan-ncnn-vulkan.exe").exists() {
+            return Some(p.to_path_buf());
+        }
+        for e in std::fs::read_dir(p).ok()?.flatten() {
+            if e.file_type().ok()?.is_dir() {
+                if let Some(r) = achar_motor(&e.path()) {
+                    return Some(r);
+                }
+            }
+        }
+        None
+    }
+    let novo = achar_motor(&tmp).ok_or("o pacote baixado não contém o motor (exe não achado)")?;
+    if !novo.join("models").exists() {
+        return Err("o pacote baixado não contém a pasta de modelos".into());
+    }
+    // Guarda a versão atual como "anterior" (uma só, a mais recente).
+    let anterior = bin_dir.join("realesrgan-anterior");
+    let _ = std::fs::remove_dir_all(&anterior);
+    std::fs::rename(&dir, &anterior).map_err(|e| format!("falha ao guardar versão anterior: {e}"))?;
+    // Move o motor novo para o lugar.
+    if let Err(e) = std::fs::rename(&novo, &dir) {
+        let _ = std::fs::rename(&anterior, &dir); // desfaz
+        return Err(format!("falha ao instalar nova versão: {e}"));
+    }
+    std::fs::write(dir.join("VERSAO.txt"), &tag).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_dir_all(&tmp);
+    Ok(format!("Motor atualizado para {tag}. Versão anterior guardada para rollback."))
+}
+
+/// Volta o sidecar para a versão anterior guardada.
+#[tauri::command]
+fn motor_sidecar_rollback() -> Result<String, String> {
+    let dir = realesrgan_dir()?;
+    let anterior = dir.parent().unwrap().join("realesrgan-anterior");
+    if !anterior.join("realesrgan-ncnn-vulkan.exe").exists() {
+        return Err("não há versão anterior guardada".into());
+    }
+    let atual = dir.parent().unwrap().join("realesrgan-quebrado");
+    let _ = std::fs::remove_dir_all(&atual);
+    std::fs::rename(&dir, &atual).map_err(|e| e.to_string())?;
+    std::fs::rename(&anterior, &dir).map_err(|e| e.to_string())?;
+    let v = std::fs::read_to_string(dir.join("VERSAO.txt")).unwrap_or_default();
+    Ok(format!("Voltou para a versão anterior ({})", v.trim()))
+}
+
+/* ---------------- Atualização da Central (§8, updater) ---------------- */
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CentralUpdate {
+    disponivel: bool,
+    versao: Option<String>,
+    notas: Option<String>,
+}
+
+#[tauri::command]
+async fn central_verificar_atualizacao(app: tauri::AppHandle) -> Result<CentralUpdate, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    match updater.check().await {
+        Ok(Some(u)) => Ok(CentralUpdate {
+            disponivel: true,
+            versao: Some(u.version.clone()),
+            notas: u.body.clone(),
+        }),
+        Ok(None) => Ok(CentralUpdate { disponivel: false, versao: None, notas: None }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+async fn central_instalar_atualizacao(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let Some(u) = updater.check().await.map_err(|e| e.to_string())? else {
+        return Err("nenhuma atualização disponível".into());
+    };
+    u.download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok("Atualização instalada. Reinicie a Central.".into())
 }
 
 #[tauri::command]
@@ -1521,6 +1661,7 @@ fn backup_importar(state: tauri::State<Mutex<AppState>>, origem: String) -> Resu
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // A config fica num local fixo (dados do app); a pasta de dados em si
             // é configurável e por padrão fica em Documentos\CentralDTF (§3).
@@ -1589,6 +1730,11 @@ fn main() {
             editor_desfazer,
             editor_salvar,
             editor_descartar,
+            motor_sidecar_status,
+            motor_sidecar_atualizar,
+            motor_sidecar_rollback,
+            central_verificar_atualizacao,
+            central_instalar_atualizacao,
             escolher_pasta,
             config_obter,
             config_definir_pasta,

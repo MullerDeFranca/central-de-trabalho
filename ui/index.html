@@ -46,6 +46,9 @@
           <button id="backup-importar" title="Restaura um backup exportado anteriormente">Importar backup…</button>
         </div>
         <div id="cfg-aviso" class="info"></div>
+
+        <h2 style="margin-top:28px">Atualizações</h2>
+        <div id="upd-lista" class="lista-upd"></div>
       </aside>
       <main>
         <h2>Logos</h2>
@@ -320,5 +323,10 @@
     </section>
 
     <script type="module" src="/src/main.js"></script>
+    <div id="upd-toast" hidden>
+      <span id="upd-toast-txt"></span>
+      <button id="upd-toast-ver">Ver</button>
+      <button id="upd-toast-depois" title="Lembrar depois">×</button>
+    </div>
   </body>
 </html>

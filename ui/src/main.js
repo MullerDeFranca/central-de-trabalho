@@ -2701,3 +2701,280 @@ $('#mk-salvar').addEventListener('click', async () => {
   }
   bt.disabled = false;
 });
+
+/* ================= Atualizações dos motores + da Central (§8/§9) =================
+   Checagem no máximo 1x/dia, sem erro visível se falhar; toda atualização
+   depende de aprovação do Murilo. Estado em <dados>/motores.json. */
+
+const MOTORES = [
+  {
+    id: 'sidecar',
+    nome: 'Ampliação IA — motor ncnn (sidecar)',
+    repo: 'upscayl/upscayl-ncnn',
+    tipo: 'sidecar',
+    baseData: '2022-04-24', // build embutido (pacote Real-ESRGAN v0.2.5.0)
+    fork: 'MullerDeFranca/upscayl-ncnn',
+    meusArquivos: [],
+  },
+  {
+    id: 'upscaylapp',
+    nome: 'App Upscayl — modelos próprios e pipeline',
+    repo: 'upscayl/upscayl',
+    tipo: 'fork',
+    baseData: '2026-03-27', // commit a00d55f, base do fork upscaylae
+    fork: 'MullerDeFranca/upscaylae',
+    meusArquivos: [
+      'electron/muller/*', 'common/muller-*.ts', 'common/models-list.ts',
+      'resources/models/arte-chapada-*', 'resources/models/limpa-jpeg-4x.*',
+      'GUIA-MULLER.md', 'electron/index.ts', 'electron/main-window.ts',
+    ],
+  },
+  {
+    id: 'vtracer',
+    nome: 'Vetorização — VTracer (compilado na Central)',
+    repo: 'visioncortex/vtracer',
+    tipo: 'lib',
+    baseData: '2026-11-23', // commit 82fedd1, base do fork
+    fork: 'MullerDeFranca/vtracer',
+    meusArquivos: [],
+  },
+];
+
+const upd = { estado: null, releases: {} };
+
+async function updLerEstado() {
+  if (upd.estado) return upd.estado;
+  upd.estado = { ultimaChecagem: 0, motores: {} };
+  if (!TAURI) return upd.estado;
+  try {
+    const cfg = await invoke('config_obter');
+    const b64 = await invoke('ler_arquivo_b64', { pasta: cfg.pastaDados, nome: 'motores.json' });
+    if (b64) upd.estado = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))));
+  } catch (e) { /* primeira execução ou arquivo ausente: começa zerado */ }
+  if (!upd.estado.motores) upd.estado.motores = {};
+  return upd.estado;
+}
+
+async function updGravarEstado() {
+  if (!TAURI || !upd.estado) return;
+  try {
+    const cfg = await invoke('config_obter');
+    await invoke('escrever_arquivo_texto', {
+      pasta: cfg.pastaDados,
+      nome: 'motores.json',
+      texto: JSON.stringify(upd.estado, null, 2),
+    });
+  } catch (e) { console.warn('não gravei motores.json', e); }
+}
+
+/* Mini-renderizador de markdown para os patch notes (§9.4). */
+function mdMini(src) {
+  const escH = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const inline = (s) => escH(s)
+    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+  const linhas = String(src || '').split('\n');
+  let html = '', emLista = false;
+  for (const ln of linhas) {
+    const t = ln.trimEnd();
+    if (/^#{1,4}\s/.test(t)) {
+      if (emLista) { html += '</ul>'; emLista = false; }
+      html += `<h4>${inline(t.replace(/^#{1,4}\s*/, ''))}</h4>`;
+    } else if (/^[-*]\s+/.test(t)) {
+      if (!emLista) { html += '<ul>'; emLista = true; }
+      html += `<li>${inline(t.replace(/^[-*]\s+/, ''))}</li>`;
+    } else if (t === '') {
+      if (emLista) { html += '</ul>'; emLista = false; }
+    } else {
+      if (emLista) { html += '</ul>'; emLista = false; }
+      html += `<p>${inline(t)}</p>`;
+    }
+  }
+  if (emLista) html += '</ul>';
+  return html;
+}
+
+function updStatusDo(m) {
+  const rel = upd.releases[m.id];
+  const st = upd.estado.motores[m.id] || {};
+  if (!rel) return { situacao: 'desconhecido' };
+  const nova = rel.tag_name || rel.name || '';
+  const dataRel = (rel.published_at || '').slice(0, 10);
+  const temNova = dataRel > m.baseData;
+  if (!temNova) return { situacao: 'atualizado', rel };
+  if (st.ignorar === nova) return { situacao: 'ignorada', rel };
+  return { situacao: 'ha-atualizacao', rel, nova, dataRel };
+}
+
+async function checarAtualizacoesMotores(forcar = false) {
+  const st = await updLerEstado();
+  const umDia = 24 * 60 * 60 * 1000;
+  if (!forcar && Date.now() - (st.ultimaChecagem || 0) < umDia) { renderAtualizacoes(); return; }
+  st.ultimaChecagem = Date.now();
+  await updGravarEstado();
+  for (const m of MOTORES) {
+    try {
+      const r = await fetch(`https://api.github.com/repos/${m.repo}/releases/latest`, {
+        headers: { Accept: 'application/vnd.github+json' },
+      });
+      if (r.ok) upd.releases[m.id] = await r.json();
+    } catch (e) { /* sem internet ou limite da API: silêncio, tenta depois (§9.3) */ }
+  }
+  renderAtualizacoes();
+  const novas = MOTORES.filter((m) => updStatusDo(m).situacao === 'ha-atualizacao');
+  if (novas.length) {
+    $('#upd-toast-txt').textContent = novas.length === 1
+      ? `Atualização disponível: ${novas[0].nome}`
+      : `${novas.length} motores com atualização disponível`;
+    $('#upd-toast').hidden = false;
+  }
+}
+
+async function updAplicar(m, cardEl) {
+  const info = updStatusDo(m);
+  const rel = info.rel;
+  const tag = rel.tag_name || rel.name || '';
+  const st = (upd.estado.motores[m.id] = upd.estado.motores[m.id] || { historico: [] });
+  if (m.tipo === 'sidecar') {
+    const asset = (rel.assets || []).find((a) => /windows/i.test(a.name) && /\.zip$/i.test(a.name));
+    if (!asset) { alert('Esta release não tem pacote para Windows.'); return; }
+    cardEl.querySelector('.upd-acoes').innerHTML = '<span class="fraco">Baixando e trocando o motor… (pode levar alguns minutos)</span>';
+    try {
+      const msg = await invoke('motor_sidecar_atualizar', { url: asset.browser_download_url, tag });
+      st.historico.unshift({ tag, data: new Date().toISOString().slice(0, 10), status: 'atualizado' });
+      m.baseData = (rel.published_at || '').slice(0, 10);
+      await updGravarEstado();
+      alert(msg);
+    } catch (e) {
+      alert('Falha ao atualizar: ' + e);
+    }
+    renderAtualizacoes();
+  } else {
+    const passos = m.tipo === 'lib'
+      ? `git fetch upstream\ngit switch master && git merge upstream/master\ngit switch Melhorias-Muller && git merge master\n# resolva conflitos se houver, depois atualize o crate na Central (Cargo.toml) e gere nova versão`
+      : `git fetch upstream\ngit switch main && git merge upstream/main\ngit switch Melhorias-Muller && git merge main\n# resolva conflitos se houver`;
+    const aviso = m.meusArquivos.length
+      ? `\n\nATENÇÃO — você tem alterações próprias que podem conflitar (ver ALTERACOES-MULLER.md):\n` + m.meusArquivos.join(', ')
+      : '';
+    alert(`Passo a passo para atualizar ${m.nome} (fork ${m.fork}):\n\n${passos}${aviso}`);
+  }
+}
+
+async function renderAtualizacoes() {
+  const host = $('#upd-lista');
+  if (!host) return;
+  await updLerEstado();
+  host.innerHTML = '';
+
+  // Cartão da própria Central (updater do Tauri).
+  const central = document.createElement('div');
+  central.className = 'upd-card';
+  central.innerHTML = `
+    <div class="upd-topo"><b>Central de Trabalho</b><span class="fraco">este programa</span></div>
+    <div class="upd-acoes"><button data-a="verificar-central">Verificar atualização</button></div>
+    <div class="upd-status fraco"></div>`;
+  central.querySelector('[data-a="verificar-central"]').addEventListener('click', async (ev) => {
+    const status = central.querySelector('.upd-status');
+    status.textContent = 'Verificando…';
+    try {
+      const r = await invoke('central_verificar_atualizacao');
+      if (!r.disponivel) { status.textContent = 'A Central está na versão mais recente.'; return; }
+      status.innerHTML = `Nova versão <b>${esc(r.versao)}</b> disponível.`;
+      const bt = document.createElement('button');
+      bt.textContent = 'Atualizar';
+      bt.className = 'primario';
+      bt.onclick = async () => {
+        bt.disabled = true;
+        status.textContent = 'Baixando e instalando…';
+        try { status.textContent = await invoke('central_instalar_atualizacao'); }
+        catch (e) { status.textContent = String(e); bt.disabled = false; }
+      };
+      status.append(' ', bt);
+    } catch (e) {
+      status.textContent = 'Não consegui verificar agora (sem internet ou updater não configurado).';
+    }
+  });
+  host.appendChild(central);
+
+  // Cartões dos motores.
+  for (const m of MOTORES) {
+    const st = upd.estado.motores[m.id] || {};
+    const info = updStatusDo(m);
+    const card = document.createElement('div');
+    card.className = 'upd-card upd-' + info.situacao;
+    const rotulos = { 'atualizado': 'em dia', 'ha-atualizacao': 'há atualização', 'ignorada': 'versão ignorada', 'desconhecido': 'não verificado' };
+    let detalhes = '';
+    if (info.rel && info.situacao !== 'atualizado' && info.situacao !== 'desconhecido') {
+      const notas = mdMini(info.rel.body || '(sem notas)');
+      detalhes = `
+        <details class="upd-notas"><summary>Patch notes (${esc(info.nova || '')}, ${esc(info.dataRel || '')})</summary>
+        <div class="upd-notas-corpo">${notas}</div>
+        <div class="fraco"><a href="https://github.com/${m.repo}/releases/latest" target="_blank" rel="noopener">Ver no GitHub</a></div></details>`;
+      if (m.meusArquivos.length) {
+        detalhes += `<div class="upd-conflito">Você tem alterações próprias neste projeto — verifique conflitos em: ${m.meusArquivos.map(esc).join(', ')} (ver ALTERACOES-MULLER.md).</div>`;
+      }
+    }
+    const historico = (st.historico || []).slice(0, 3)
+      .map((h) => `${h.data}: ${esc(h.tag)} (${h.status})`).join('<br>');
+    card.innerHTML = `
+      <div class="upd-topo"><b>${esc(m.nome)}</b><span class="selo selo-${info.situacao}">${rotulos[info.situacao]}</span></div>
+      <div class="fraco">base: ${esc(m.baseData)} · fork ${esc(m.fork)}</div>
+      ${detalhes}
+      <div class="upd-acoes"></div>
+      ${historico ? `<div class="fraco upd-hist">${historico}</div>` : ''}`;
+    const acoes = card.querySelector('.upd-acoes');
+    if (info.situacao === 'ha-atualizacao') {
+      const bAt = document.createElement('button');
+      bAt.textContent = 'Atualizar';
+      bAt.className = 'primario';
+      bAt.onclick = () => updAplicar(m, card);
+      const bIg = document.createElement('button');
+      bIg.textContent = 'Ignorar esta versão';
+      bIg.onclick = async () => {
+        const s2 = (upd.estado.motores[m.id] = upd.estado.motores[m.id] || {});
+        s2.ignorar = info.nova;
+        s2.historico = s2.historico || [];
+        s2.historico.unshift({ tag: info.nova, data: new Date().toISOString().slice(0, 10), status: 'ignorada' });
+        await updGravarEstado();
+        renderAtualizacoes();
+      };
+      const bDp = document.createElement('button');
+      bDp.textContent = 'Lembrar depois';
+      bDp.onclick = () => { $('#upd-toast').hidden = true; };
+      acoes.append(bAt, bIg, bDp);
+    }
+    if (m.tipo === 'sidecar') {
+      try {
+        const ss = await invoke('motor_sidecar_status');
+        if (ss.temAnterior) {
+          const bRb = document.createElement('button');
+          bRb.textContent = 'Voltar à versão anterior';
+          bRb.onclick = async () => {
+            try { alert(await invoke('motor_sidecar_rollback')); renderAtualizacoes(); }
+            catch (e) { alert(String(e)); }
+          };
+          acoes.append(bRb);
+        }
+      } catch (e) { /* sem sidecar instalado */ }
+    }
+    host.appendChild(card);
+  }
+
+  const bRec = document.createElement('button');
+  bRec.textContent = 'Verificar agora';
+  bRec.className = 'upd-rechecar';
+  bRec.onclick = () => checarAtualizacoesMotores(true);
+  host.appendChild(bRec);
+}
+
+$('#upd-toast-ver').addEventListener('click', () => {
+  $('#upd-toast').hidden = true;
+  document.querySelector('#abas button[data-aba="biblioteca"]').click();
+});
+$('#upd-toast-depois').addEventListener('click', () => { $('#upd-toast').hidden = true; });
+
+if (TAURI) {
+  renderAtualizacoes();
+  checarAtualizacoesMotores(false);
+}
